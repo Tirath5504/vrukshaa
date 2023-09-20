@@ -1,31 +1,77 @@
-# Contains model and predict function
+import os
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import VGG19
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D
+from tensorflow.keras.models import Model
 
-from PIL import Image
-import requests
-from io import BytesIO
+# Define the paths for your preprocessed dataset
+preprocessed_root = '/home/tirath/Documents/vruksha/vrukshaa/preprocessed_dataset'
 
+# Define the model and training parameters
+input_shape = (224, 224, 3)
+num_classes = len(os.listdir(os.path.join(preprocessed_root, 'train')))  # Number of disease classes
 
-def predict(image_url):
-    # Will contain ML model
-    # For now, just returns mode of image - RGB, L
+# Data augmentation (optional)
+train_datagen = ImageDataGenerator(
+    rescale=1.0/255.0,
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
 
-    try:
-        response = requests.get(image_url)
+# Load the pre-trained VGG-19 model
+base_model = VGG19(weights='imagenet', include_top=False, input_shape=input_shape)
 
-        if response.status_code == 200:
-            img = Image.open(BytesIO(response.content))
-            img.show()
+# Add custom classification layers on top of VGG-19
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dense(256, activation='relu')(x)
+x = Dense(num_classes, activation='softmax')(x)
 
-        else:
-            print(f"Error: Unable to fetch image from URL. Status code: {response.status_code}")
+# Create the final model
+model = Model(inputs=base_model.input, outputs=x)
 
-    except Exception as e:
-        print(f"Error processing image: {e}")
+# Freeze the layers of the pre-trained VGG-19 model
+for layer in base_model.layers:
+    layer.trainable = False
 
+# Compile the model
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
-def main():
-    predict("https://richmondmagazine.com/downloads/25689/download/Eat%26Drink_Ingredient_Corn_GETTY_BERGAMONT_rp0719.jpg?cb=a563e4ce774a29c50f7edaebda4efaa0&w=640&h=")
+# Data generators
+batch_size = 32
 
+train_generator = train_datagen.flow_from_directory(
+    os.path.join(preprocessed_root, 'train'),
+    target_size=input_shape[:2],
+    batch_size=batch_size,
+    class_mode='categorical'
+)
 
-if __name__ == "__main__":
-    main()
+validation_generator = ImageDataGenerator(rescale=1.0/255.0).flow_from_directory(
+    os.path.join(preprocessed_root, 'validation'),
+    target_size=input_shape[:2],
+    batch_size=batch_size,
+    class_mode='categorical'
+)
+
+# Train the model
+epochs = 10
+
+history = model.fit(
+    train_generator,
+    steps_per_epoch=train_generator.samples // batch_size,
+    epochs=epochs,
+    validation_data=validation_generator,
+    validation_steps=validation_generator.samples // batch_size
+)
+
+# Save the trained model
+model.save('/home/tirath/Documents/vruksha/vrukshaa/model.h5')
+
+print("Model training complete.")
